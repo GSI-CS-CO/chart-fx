@@ -18,12 +18,10 @@ import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
+import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import javafx.event.EventHandler;
-import javafx.geometry.Bounds;
-import javafx.geometry.Insets;
-import javafx.geometry.Orientation;
-import javafx.geometry.Point2D;
+import javafx.geometry.*;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
 import javafx.scene.canvas.Canvas;
@@ -46,8 +44,10 @@ import de.gsi.chart.Chart;
 import de.gsi.chart.XYChart;
 import de.gsi.chart.axes.Axis;
 import de.gsi.chart.axes.AxisMode;
+import de.gsi.chart.axes.spi.AbstractAxis;
 import de.gsi.chart.ui.ObservableDeque;
 import de.gsi.chart.ui.geometry.Side;
+import de.gsi.dataset.event.UpdateEvent;
 
 /**
  * Zoom capabilities along X, Y or both axis. For every zoom-in operation the current X and Y range is remembered and
@@ -204,17 +204,31 @@ public class Zoomer extends ChartPlugin {
             if (zoomStacks.isEmpty()) {
                 makeSnapshotOfView();
             }
-
             for (final Axis axis : getChart().getAxes()) {
                 if (axis.getSide() == null || !(axis.getSide().isHorizontal() ? mode.allowsX() : mode.allowsY())
                         || isOmitZoomInternal(axis)) {
                     continue;
                 }
-
-                Zoomer.zoomOnAxis(axis, event);
+                zoomOnAxis(axis, event);
             }
-
             event.consume();
+            return;
+        }
+        // Zoom on individual axis
+        for (final Axis axis : getChart().getAxes()) {
+            // only listen to events within the axis
+            final Point2D mouseLoc = new Point2D(event.getScreenX(), event.getScreenY());
+            final Canvas canvas = axis.getCanvas();
+            final Bounds screenBounds = canvas.localToScreen(canvas.getBoundsInLocal());
+            if (screenBounds.contains(mouseLoc)) {
+                // allow to return to default view
+                if (zoomStacks.isEmpty()) {
+                    makeSnapshotOfView();
+                }
+                zoomOnAxis(axis, event);
+                event.consume();
+                return;
+            }
         }
     };
 
@@ -1164,14 +1178,16 @@ public class Zoomer extends ChartPlugin {
         return new Point2D(limitedX, limitedY);
     }
 
-    private static void zoomOnAxis(final Axis axis, final ScrollEvent event) {
-        if (hasBoundedRange(axis)) {
+    private void zoomOnAxis(final Axis axis, final ScrollEvent event) {
+        axis.setAutoRanging(false); // disable auto-ranging, s.t. axes are not bound anymore by it
+        if (hasBoundedRange(axis)) { // skip axes which are externally bound
             return;
         }
         final boolean isZoomIn = event.getDeltaY() > 0;
         final boolean isHorizontal = axis.getSide().isHorizontal();
 
-        final double mousePos = isHorizontal ? event.getX() : event.getY();
+        final Point2D pos = getChart().getCanvas().sceneToLocal(event.getSceneX(), event.getSceneY());
+        final double mousePos = isHorizontal ? pos.getX() : pos.getY();
         final double posOnAxis = axis.getValueForDisplay(mousePos);
         final double max = axis.getMax();
         final double min = axis.getMin();
